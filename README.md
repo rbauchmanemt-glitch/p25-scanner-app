@@ -5,33 +5,35 @@ mobile from a single codebase (no separate app builds).
 
 ## How it works
 
-Units are push-buttons: tap one ON and it opens a live WebSocket connection
-that plays every new call for that unit as it arrives, until you tap it
-OFF. Tap a unit's name (not the toggle) to just hear its most recent call
-once, without turning on continuous monitoring.
+Channels are push-buttons: tap one ON and it opens a live WebSocket
+connection that plays every new call for that channel as it arrives, until
+you tap it OFF. Tap a channel's name (not the toggle) to just hear its
+most recent call once, without turning on continuous monitoring.
 
 ## Backend
 
-Wired to the Bexar County Scanner API (`api.bexarcountyscanner.com`) — see
-`DASHBOARD-INTEGRATION-HANDOFF.md` for the full API reference. Config lives
-at the top of the `<script>` block in `index.html`:
+Wired to the Bexar County Scanner API (`api.bexarcountyscanner.com`), but
+the site never talks to it directly — everything goes through the auth
+Worker (`worker/worker.js`), which holds the real API key server-side and
+proxies requests only for browsers with a valid login session. `index.html`
+has no API key in it at all:
 
 ```js
-const API_BASE = 'https://api.bexarcountyscanner.com';
-const API_KEY  = 'PASTE_KEY_HERE'; // ask Ryan for this
+const AUTH_BASE = 'https://auth.bexarcountyscanner.com';
+const API_BASE = AUTH_BASE; // same Worker handles auth + API proxy
 ```
 
 **Known limitations of this API:**
-- No bulk history endpoint — only the single most-recent call per unit
-  (used for preview) and live push. The "Recent" tab only shows what's
+- No bulk history endpoint — only the single most-recent call per channel
+  (used for preview) and live push. The main feed only shows what's
   accumulated client-side during the current session, not a real log.
-- The API key ships in plain client-side JS. On a public GitHub Pages
-  site that means anyone can view-source and grab it — that's how the
-  API's own docs set it up (open CORS, no proxy). Worth checking with
-  Ryan whether that's an acceptable risk or whether a proxy is needed
-  down the line.
 - "Live" has a few seconds of delay — a call has to finish transmitting
   and get processed before it's available, not true mid-transmission audio.
+- The Worker can't relay the live-push WebSocket itself (Cloudflare Workers
+  can't proxy a WebSocket to another Cloudflare-proxied host), so instead
+  it hands the browser a short-lived, authenticated URL to connect to
+  directly for that one connection — see the comments in `worker.js` for
+  details.
 
 ## Running locally
 
@@ -70,9 +72,11 @@ After deploying the Worker, put its URL into `AUTH_BASE` near the top of
 
 ## Next steps
 
-- Add your API key to `index.html`
-- Persist monitored-unit selection (currently resets on page reload)
-- Consider a small proxy if the exposed client-side API key is a concern
+- Add overlapping audio playback if simultaneous calls across channels
+  become a real annoyance in practice
+- Consider push notifications as a lighter-weight alternative to true
+  background audio (not achievable in a web app — see chat history for
+  why)
 
 ## PWA / installability
 
