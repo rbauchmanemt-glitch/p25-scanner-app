@@ -1,0 +1,23 @@
+name = "p25-scanner-auth"
+main = "worker.js"
+compatibility_date = "2026-08-01"
+
+[vars]
+ALLOWED_ORIGIN = "https://scanner.bexarcountyscanner.com"
+SESSION_HOURS = "168"
+SCANNER_API_BASE = "https://api.bexarcountyscanner.com"
+ADMIN_NAMES = "Ryan Bauchman"
+LOG_RETENTION_DAYS = "90"
+
+# KV namespace for tracking who's currently signed in (admin panel).
+# Create it once with:
+#   wrangler kv namespace create SESSIONS
+# That prints an "id" — paste it below.
+[[kv_namespaces]]
+binding = "SESSIONS"
+id = "6553be524ff9462f9820c48070a9217f"
+
+# Secrets — do NOT put these here. Set them with:
+#   wrangler secret put PINS_JSON
+#   wrangler secret put SESSION_SECRET
+#   wrangler secret put SCANNER_API_KEY

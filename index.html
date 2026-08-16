@@ -1,0 +1,1137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>P25 Scanner</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#0a0d0e">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="BC Scanner">
+<link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="favicon-16.png">
+<link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
+<style>
+  :root{
+    --bg: #0a0d0e;
+    --panel: #12171a;
+    --panel-2: #171d21;
+    --line: #232b2f;
+    --amber: #ffb238;
+    --amber-dim: #7a5a1f;
+    --green: #4ade80;
+    --red: #ff5555;
+    --text: #d8dfe2;
+    --text-dim: #6b7780;
+    --mono: 'SF Mono', 'JetBrains Mono', 'Courier New', monospace;
+    --sans: -apple-system, 'Inter', 'Segoe UI', sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    height: 100dvh;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+  button { font-family: inherit; cursor: pointer; }
+  .hidden { display: none !important; }
+
+  #app {
+    display: grid;
+    grid-template-columns: 260px 1fr;
+    grid-template-rows: 1fr auto;
+    height: 100dvh;
+  }
+
+  /* iOS PWA (installed to home screen) renders content under the notch/
+     status bar unless we reserve space for it. Only the top matters here
+     — the notch/status bar visually sits on top of content, while the
+     bottom home-indicator area is just a swipe-gesture zone, not
+     something that covers content, so padding down there just wastes
+     space for no benefit. Only applies in standalone mode — regular
+     Safari already accounts for its own chrome. */
+  @media (display-mode: standalone) {
+    #app {
+      box-sizing: border-box;
+      padding-top: env(safe-area-inset-top);
+    }
+    /* #sidebar is position:fixed on mobile (a slide-in drawer), which
+       takes it out of #app's box entirely — so its header needs its own
+       matching top padding. */
+    #sidebar {
+      padding-top: env(safe-area-inset-top);
+      box-sizing: border-box;
+    }
+  }
+
+  /* ---------- Sidebar (talkgroups) ---------- */
+  #sidebar {
+    grid-row: 1 / 2;
+    grid-column: 1 / 2;
+    background: var(--panel);
+    border-right: 1px solid var(--line);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  #sidebar-header {
+    padding: 16px 16px 12px;
+    border-bottom: 1px solid var(--line);
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+  }
+  #sidebar-close { display: none; }
+  #sidebar-header h1 {
+    font-family: var(--mono);
+    font-size: 13px;
+    letter-spacing: 0.12em;
+    color: var(--amber);
+    font-weight: 600;
+  }
+  #sidebar-header .sub {
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-top: 4px;
+    font-family: var(--mono);
+  }
+  #search {
+    margin: 12px 12px 8px;
+    padding: 8px 10px;
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 12px;
+    width: calc(100% - 24px);
+  }
+  #search:focus { outline: none; border-color: var(--amber-dim); }
+  #tg-list {
+    flex: 1;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 4px 8px 12px;
+  }
+  #admin-link {
+    display: block;
+    text-align: center;
+    padding: 10px;
+    margin: 0 12px 12px;
+    border-top: 1px solid var(--line);
+    padding-top: 12px;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    color: var(--text-dim);
+    text-decoration: none;
+  }
+  #admin-link:hover { color: var(--amber); }
+
+  #help-toggle {
+    display: block;
+    width: calc(100% - 24px);
+    margin: 0 12px;
+    padding: 10px;
+    background: none;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.05em;
+    color: var(--text-dim);
+    text-align: left;
+  }
+  #help-toggle:hover { color: var(--amber); border-color: var(--amber-dim); }
+
+  #help-modal {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 200;
+    padding: 20px;
+  }
+  #help-modal-box {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    max-width: 380px;
+    width: 100%;
+    padding: 20px;
+  }
+  #help-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 14px;
+  }
+  #help-modal-header h2 {
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.1em;
+    color: var(--amber);
+  }
+  #help-modal-close {
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    font-size: 18px;
+    padding: 0 4px;
+  }
+  #help-modal-close:hover { color: var(--amber); }
+  #help-modal-box p {
+    font-size: 12.5px;
+    line-height: 1.6;
+    color: var(--text-dim);
+    margin-bottom: 12px;
+  }
+  #help-modal-box p:last-child { margin-bottom: 0; }
+  #help-modal-box strong { color: var(--text); }
+  .tg-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px;
+    border-radius: 4px;
+    font-size: 12.5px;
+    color: var(--text-dim);
+    transition: background 0.15s;
+  }
+  .tg-row:hover { background: var(--panel-2); }
+  .tg-row .info { flex: 1; min-width: 0; cursor: pointer; }
+  .tg-row .info:hover .name { color: var(--amber); }
+  .tg-row .name { color: var(--text-dim); }
+
+  /* push button: ON/OFF toggle per channel */
+  .tg-toggle {
+    flex-shrink: 0;
+    width: 46px;
+    height: 26px;
+    border-radius: 13px;
+    background: var(--bg);
+    border: 1px solid var(--line);
+    position: relative;
+    padding: 0;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  .tg-toggle::after {
+    content: '';
+    position: absolute;
+    top: 2px; left: 2px;
+    width: 20px; height: 20px;
+    border-radius: 50%;
+    background: var(--text-dim);
+    transition: transform 0.15s, background 0.15s, box-shadow 0.15s;
+  }
+  .tg-toggle.on {
+    background: rgba(74,222,128,0.12);
+    border-color: var(--green);
+  }
+  .tg-toggle.on::after {
+    transform: translateX(20px);
+    background: var(--green);
+    box-shadow: 0 0 8px var(--green);
+  }
+
+  .tg-row.monitored { background: rgba(255,178,56,0.04); }
+  .tg-row.monitored .name { color: var(--text); }
+  .tg-row.live-now { background: rgba(74,222,128,0.08); }
+  .tg-row.live-now .name { color: var(--text); }
+  .tg-row.live-now .dot {
+    display: inline-block;
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--green);
+    box-shadow: 0 0 6px var(--green);
+    animation: pulse 1.2s ease-in-out infinite;
+    margin-right: 6px;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.35; }
+  }
+
+  /* ---------- Main feed ---------- */
+  #main {
+    grid-row: 1 / 2;
+    grid-column: 2 / 3;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  #main-header {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--line);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  #main-header .status {
+    display: flex; align-items: center; gap: 8px;
+    font-family: var(--mono); font-size: 11px; color: var(--text-dim);
+  }
+  #main-header .status .led {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--green);
+    box-shadow: 0 0 6px var(--green);
+  }
+  #brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  #brand img {
+    display: block;
+    border-radius: 4px;
+  }
+  #brand span {
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.1em;
+    color: var(--amber);
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  #feed {
+    flex: 1;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 8px 20px 20px;
+  }
+  .call-row {
+    display: grid;
+    grid-template-columns: 70px 1fr auto;
+    gap: 12px;
+    align-items: center;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--line);
+    font-size: 13px;
+  }
+  .call-row .time {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+  .call-row .info .tg-name { color: var(--text); }
+  .call-row .info .tg-meta {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--text-dim);
+    margin-top: 2px;
+  }
+  .call-row .dur {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+  .call-row.live {
+    background: rgba(74,222,128,0.05);
+    border-left: 2px solid var(--green);
+  }
+  .call-row.live .dur { color: var(--green); }
+
+  /* ---------- Now playing bar ---------- */
+  #nowplaying {
+    grid-row: 2 / 3;
+    grid-column: 1 / 3;
+    background: var(--panel);
+    border-top: 1px solid var(--line);
+    padding: 12px 20px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    min-height: 64px;
+  }
+  #nowplaying .display {
+    font-family: var(--mono);
+    flex: 1;
+    min-width: 0;
+  }
+  #nowplaying .display .freq {
+    color: var(--amber);
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+  }
+  #nowplaying .display .tg {
+    color: var(--text-dim);
+    font-size: 11px;
+    margin-top: 2px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  #nowplaying .controls {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  #nowplaying button.ctrl {
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    color: var(--text);
+    width: 34px; height: 34px;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px;
+  }
+  #nowplaying .bars {
+    display: flex; align-items: flex-end; gap: 2px; height: 20px;
+  }
+  #nowplaying .bars .bar {
+    width: 3px; background: var(--amber);
+    animation: bar 0.9s ease-in-out infinite;
+  }
+  .bar:nth-child(1){height:40%; animation-delay:0s;}
+  .bar:nth-child(2){height:80%; animation-delay:0.15s;}
+  .bar:nth-child(3){height:55%; animation-delay:0.3s;}
+  .bar:nth-child(4){height:90%; animation-delay:0.1s;}
+  .bar:nth-child(5){height:35%; animation-delay:0.25s;}
+  @keyframes bar {
+    0%, 100% { transform: scaleY(0.4); }
+    50% { transform: scaleY(1); }
+  }
+
+  /* ---------- Mobile ---------- */
+  #menu-btn { display: none; }
+  #sidebar-backdrop { display: none; }
+
+  @media (max-width: 780px) {
+    #app {
+      grid-template-columns: 1fr;
+      grid-template-rows: 1fr auto;
+    }
+
+    /* Full wordmark crowds the header next to the hamburger + status text
+       on narrow phones — keep just the icon there, same brand recognition
+       without the overflow risk. */
+    #brand span { display: none; }
+
+    #menu-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 32px;
+      height: 32px;
+      background: var(--panel-2);
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      color: var(--text);
+      font-size: 16px;
+      margin-right: 8px;
+    }
+
+    #sidebar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      width: 78vw;
+      max-width: 300px;
+      z-index: 60;
+      border-right: 1px solid var(--line);
+      border-top: none;
+      transform: translateX(-100%);
+      transition: transform 0.2s ease;
+    }
+    #sidebar.open { transform: translateX(0); }
+
+    #sidebar-close {
+      display: block;
+      background: none;
+      border: none;
+      color: var(--text-dim);
+      font-size: 18px;
+      padding: 0 4px;
+    }
+
+    #sidebar-backdrop.open {
+      display: block;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.5);
+      z-index: 50;
+    }
+
+    #main { grid-row: 1 / 2; grid-column: 1 / 2; }
+    #nowplaying { grid-row: 2 / 3; grid-column: 1 / 2; }
+    .call-row { grid-template-columns: 55px 1fr auto; font-size: 12px; }
+  }
+
+  ::-webkit-scrollbar { width: 8px; }
+  ::-webkit-scrollbar-thumb { background: var(--line); border-radius: 4px; }
+
+  /* ---------- PIN gate overlay ---------- */
+  #gate {
+    position: fixed;
+    inset: 0;
+    background: var(--bg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+  }
+  #gate.hidden { display: none; }
+  #gate-box {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 32px;
+    width: 260px;
+    text-align: center;
+  }
+  #gate-box h2 {
+    font-family: var(--mono);
+    font-size: 13px;
+    letter-spacing: 0.12em;
+    color: var(--amber);
+    margin-bottom: 20px;
+  }
+  #gate-pin {
+    width: 100%;
+    padding: 12px;
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 20px;
+    letter-spacing: 0.3em;
+    text-align: center;
+  }
+  #gate-pin:focus { outline: none; border-color: var(--amber-dim); }
+  #gate-submit {
+    width: 100%;
+    margin-top: 12px;
+    padding: 10px;
+    background: rgba(255,178,56,0.1);
+    border: 1px solid var(--amber-dim);
+    border-radius: 4px;
+    color: var(--amber);
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.08em;
+  }
+  #gate-error {
+    color: var(--red);
+    font-size: 11px;
+    font-family: var(--mono);
+    margin-top: 10px;
+    min-height: 14px;
+  }
+  #signed-in-as {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-dim);
+  }
+  #signed-in-as button {
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    text-decoration: underline;
+    font-family: var(--mono);
+    font-size: 10px;
+    margin-left: 6px;
+  }
+</style>
+</head>
+<body>
+
+<div id="gate">
+  <div id="gate-box">
+    <h2>ENTER PIN</h2>
+    <input id="gate-pin" type="password" inputmode="numeric" maxlength="8" autocomplete="off" />
+    <button id="gate-submit">UNLOCK</button>
+    <div id="gate-error"></div>
+  </div>
+</div>
+
+<div id="app" class="hidden">
+
+  <div id="sidebar-backdrop"></div>
+
+  <aside id="sidebar">
+    <div id="sidebar-header">
+      <div>
+        <h1>CHANNELS</h1>
+        <div class="sub" id="tg-count">0 monitored</div>
+      </div>
+      <button id="sidebar-close" aria-label="close menu">✕</button>
+    </div>
+    <input id="search" placeholder="filter channels..." />
+    <div id="tg-list"></div>
+
+    <button id="help-toggle">❔ HOW IT WORKS</button>
+
+    <a href="admin.html" id="admin-link">⚙ ADMIN</a>
+  </aside>
+
+  <main id="main">
+    <div id="main-header">
+      <div style="display:flex; align-items:center; gap: 10px;">
+        <button id="menu-btn" aria-label="open channels menu">☰</button>
+        <div id="brand">
+          <img src="favicon-32.png" alt="" width="26" height="26" />
+          <span>BEXAR COUNTY SCANNER</span>
+        </div>
+      </div>
+      <div class="status">
+        <span id="signed-in-as"></span>
+        <span class="led"></span><span id="conn-label">idle</span>
+      </div>
+    </div>
+    <div id="feed"></div>
+  </main>
+
+  <div id="nowplaying">
+    <div class="display">
+      <div class="freq" id="np-freq">TG --</div>
+      <div class="tg" id="np-tg">No active transmission</div>
+    </div>
+    <div class="bars" id="np-bars">
+      <div class="bar"></div><div class="bar"></div><div class="bar"></div><div class="bar"></div><div class="bar"></div>
+    </div>
+    <div class="controls">
+      <button class="ctrl" id="mute-btn" title="mute">🔊</button>
+    </div>
+  </div>
+
+</div>
+
+<div id="help-modal" class="hidden">
+  <div id="help-modal-box">
+    <div id="help-modal-header">
+      <h2>HOW IT WORKS</h2>
+      <button id="help-modal-close" aria-label="close">✕</button>
+    </div>
+    <p><strong>Toggle a channel ON</strong> — plays every new call on that
+    channel automatically as it comes in, until you toggle it off.</p>
+    <p><strong>Tap a channel's name</strong> — instantly plays its most
+    recent call, without turning on continuous monitoring.</p>
+    <p>Calls on different channels play one at a time, in the order they
+    arrive — if two overlap, the second one waits its turn.</p>
+  </div>
+</div>
+
+<audio id="player" preload="none"></audio>
+
+<script>
+/* ============================================================
+   CONFIG — Bexar County Scanner API
+   ============================================================ */
+// URL of the auth + proxy Worker — printed by `wrangler deploy` in /worker
+const AUTH_BASE = 'https://auth.bexarcountyscanner.com';
+
+// The real API key never lives in this file anymore — API_BASE points at
+// the same Cloudflare Worker, which holds the key server-side and proxies
+// requests only for browsers with a valid login session.
+const API_BASE = AUTH_BASE;
+
+
+const UNITS = [
+  "BCFA Dispatch", "Access East", "Ops East", "Access West", "Ops West",
+  "FG1", "FG2", "FG3", "FG4", "FG5", "FG6", "FG7", "FG8", "FG9", "FG10",
+  "FG 11", "FG 12", "FG 13", "FG 14", "FG 15", "FG 16", "FG 17", "FG 18",
+  "FG 19", "FG 20", "FG 21", "FG 22", "FG 23", "FG 24",
+  "EMS1", "EMS2", "EMS3", "EMS4", "EMS5", "EMS6",
+  "Aid 01", "Aid 02", "Aid 03", "Aid 04", "Aid 05",
+];
+
+/* ============================================================
+   STATE
+   ============================================================ */
+let monitoredUnits = new Set();   // units the user has switched ON (live WS open)
+let sockets = {};                 // unit -> WebSocket
+let currentlyPlayingUnit = null;
+let recentCalls = [];             // session-local cache; API has no bulk history endpoint
+let playQueue = [];
+let muted = false;
+
+/* ============================================================
+   API LAYER
+   ============================================================ */
+
+// Proxied via the Worker — /auth/verify's session cookie is what
+// authorizes this now, not a client-side key.
+async function fetchLatestForUnit(unit) {
+  const res = await fetch(`${API_BASE}/api/units/${encodeURIComponent(unit)}/live`, {
+    credentials: 'include',
+  });
+  return res.json();
+}
+
+// Cloudflare Workers can't relay a WebSocket to another Cloudflare-proxied
+// host (which the Tunnel-backed scanner API is) — so instead of the
+// Worker proxying the socket itself, we ask it for a short-lived,
+// authenticated URL and connect directly to the real API for just this
+// one connection. Requires being logged in; the key is never in this
+// file's source, only fetched transiently after auth.
+async function openUnitSocket(unit, onCall) {
+  let authData;
+  try {
+    const authRes = await fetch(`${AUTH_BASE}/ws-auth?unit=${encodeURIComponent(unit)}`, {
+      credentials: 'include',
+    });
+    authData = await authRes.json();
+  } catch (err) {
+    // Network itself failed (common right as a phone wakes from sleep,
+    // before wifi/cellular has reassociated) — don't just give up silently,
+    // schedule a retry like any other dropped connection.
+    setConnLabel(`${unit}: network error — retrying...`);
+    scheduleReconnect(unit);
+    return null;
+  }
+
+  if (!authData.ok) {
+    setConnLabel(`${unit}: not authenticated`);
+    return null;
+  }
+
+  const ws = new WebSocket(authData.wsUrl);
+  ws.onmessage = (event) => {
+    const msg = JSON.parse(event.data);
+    if (msg.type === 'new_call') {
+      onCall({
+        unit: msg.unit,
+        callId: msg.call_id,
+        talkgroup: msg.talkgroup,
+        callTime: msg.call_time,
+        audioUrl: `${API_BASE}${msg.audio_url}`,
+      });
+    }
+  };
+  ws.onerror = () => setConnLabel(`${unit}: connection error`);
+  ws.onclose = () => {
+    // ._manualClose is set by toggleUnit when the user turns a unit off
+    // on purpose — that's an expected close, not a dropped connection.
+    if (ws._manualClose) return;
+    if (monitoredUnits.has(unit)) {
+      setConnLabel(`${unit}: connection lost — reconnecting...`);
+      scheduleReconnect(unit);
+    }
+  };
+  return ws;
+}
+
+let reconnectAttempts = {}; // unit -> consecutive failed attempts
+let reconnectTimers = {};   // unit -> setTimeout id
+
+function scheduleReconnect(unit) {
+  if (!monitoredUnits.has(unit)) return; // user turned it off, don't reconnect
+  clearTimeout(reconnectTimers[unit]);
+  const attempt = (reconnectAttempts[unit] || 0) + 1;
+  reconnectAttempts[unit] = attempt;
+  const delaySec = Math.min(30, 2 ** (attempt - 1)); // 1s, 2s, 4s, 8s, 16s, capped at 30s
+  reconnectTimers[unit] = setTimeout(() => connectUnit(unit), delaySec * 1000);
+}
+
+async function connectUnit(unit) {
+  if (!monitoredUnits.has(unit)) return;
+  setConnLabel(`connecting ${unit}...`);
+  try {
+    const socketPromise = openUnitSocket(unit, handleNewCall);
+    sockets[unit] = socketPromise;
+    const ws = await socketPromise;
+    if (!monitoredUnits.has(unit)) {
+      // Toggled off again while we were still (re)connecting.
+      if (ws) { ws._manualClose = true; ws.close(); }
+      return;
+    }
+    if (ws) {
+      reconnectAttempts[unit] = 0; // reset backoff after a successful connect
+      setConnLabel(`monitoring ${monitoredUnits.size} channel${monitoredUnits.size === 1 ? '' : 's'}`);
+    }
+    // If ws is null, openUnitSocket already set an appropriate status
+    // message and (for network errors) already scheduled its own retry.
+  } catch (err) {
+    // Belt-and-suspenders: catch anything unexpected so a single bad
+    // reconnect attempt can never permanently kill the retry loop.
+    setConnLabel(`${unit}: reconnect failed — retrying...`);
+    scheduleReconnect(unit);
+  }
+}
+
+// Re-check every monitored unit's connection and revive anything dead.
+// Mobile browsers/PWAs can silently suspend a backgrounded WebSocket
+// without ever firing a close or error event, so we don't just wait for
+// those — we actively verify readyState whenever the app looks like it
+// might be "back."
+function reviveDeadSockets() {
+  monitoredUnits.forEach(async (unit) => {
+    const socketPromise = sockets[unit];
+    if (!socketPromise) {
+      connectUnit(unit); // monitored but no socket at all — start one
+      return;
+    }
+    let ws;
+    try {
+      ws = await socketPromise;
+    } catch {
+      ws = null;
+    }
+    if (!ws || ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) {
+      connectUnit(unit);
+    }
+  });
+}
+
+// Multiple triggers because no single one is reliable across every
+// mobile browser / PWA combination for "the app is back and usable."
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') reviveDeadSockets();
+});
+window.addEventListener('focus', reviveDeadSockets);
+window.addEventListener('pageshow', reviveDeadSockets);
+window.addEventListener('online', reviveDeadSockets);
+
+/* ============================================================
+   RENDERING
+   ============================================================ */
+
+const tgListEl = document.getElementById('tg-list');
+const tgCountEl = document.getElementById('tg-count');
+const feedEl = document.getElementById('feed');
+const searchEl = document.getElementById('search');
+const npFreq = document.getElementById('np-freq');
+const npTg = document.getElementById('np-tg');
+const npBars = document.getElementById('np-bars');
+const connLabelEl = document.getElementById('conn-label');
+
+function setConnLabel(text) { connLabelEl.textContent = text; }
+
+function renderUnits(filter = '') {
+  const f = filter.toLowerCase();
+  tgListEl.innerHTML = '';
+  UNITS
+    .filter(u => u.toLowerCase().includes(f))
+    .forEach(unit => {
+      const isOn = monitoredUnits.has(unit);
+      const isLive = unit === currentlyPlayingUnit;
+      const row = document.createElement('div');
+      row.className = 'tg-row' + (isOn ? ' monitored' : '') + (isLive ? ' live-now' : '');
+      row.innerHTML = `
+        <div class="info" data-preview="${unit}">
+          <span class="name">${isLive ? '<span class="dot"></span>' : ''}${unit}</span>
+        </div>
+        <button class="tg-toggle${isOn ? ' on' : ''}" data-tg="${unit}" aria-pressed="${isOn}" aria-label="${unit} ${isOn ? 'on' : 'off'}"></button>
+      `;
+      tgListEl.appendChild(row);
+    });
+  tgCountEl.textContent = `${monitoredUnits.size} monitored`;
+}
+
+const playerEl = document.getElementById('player');
+const SILENT_AUDIO = 'data:audio/wav;base64,UklGRkQDAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YSADAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgA==';
+
+// Browsers block audio playback that isn't a direct result of a click.
+// Our real playback happens later (WebSocket message, or after an async
+// fetch), which no longer counts as "direct" — so we play a silent clip
+// synchronously inside the click handler once, which unlocks audio
+// autoplay for the rest of the page session.
+function unlockAudio() {
+  if (playerEl.dataset.unlocked) return;
+  playerEl.src = SILENT_AUDIO;
+  playerEl.play().then(() => {
+    playerEl.dataset.unlocked = 'true';
+  }).catch(() => {
+    setConnLabel('tap a channel again to enable audio');
+  });
+}
+
+async function toggleUnit(unit) {
+  unlockAudio();
+  if (monitoredUnits.has(unit)) {
+    monitoredUnits.delete(unit);
+    clearTimeout(reconnectTimers[unit]);
+    delete reconnectTimers[unit];
+    reconnectAttempts[unit] = 0;
+    if (sockets[unit]) {
+      sockets[unit].then((ws) => {
+        if (ws) { ws._manualClose = true; ws.close(); }
+      });
+      delete sockets[unit];
+    }
+    if (currentlyPlayingUnit === unit) clearNowPlaying();
+    renderUnits(searchEl.value);
+  } else {
+    monitoredUnits.add(unit);
+    renderUnits(searchEl.value);
+    await connectUnit(unit);
+  }
+}
+
+function renderCall(call) {
+  const row = document.createElement('div');
+  row.className = 'call-row';
+  const t = new Date(call.callTime);
+  const timeStr = isNaN(t) ? '--:--:--' : t.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  row.innerHTML = `
+    <div class="time">${timeStr}</div>
+    <div class="info">
+      <div class="tg-name">${call.unit}</div>
+      <div class="tg-meta">TG ${call.talkgroup} · call ${call.callId}</div>
+    </div>
+    <div class="dur">▶</div>
+  `;
+  row.addEventListener('click', () => playCall(call));
+  feedEl.prepend(row);
+  while (feedEl.children.length > 100) feedEl.removeChild(feedEl.lastChild);
+}
+
+function clearNowPlaying() {
+  currentlyPlayingUnit = null;
+  npTg.textContent = 'No active transmission';
+  npFreq.textContent = 'TG --';
+  renderUnits(searchEl.value);
+}
+
+async function playCall(call) {
+  npFreq.textContent = `TG ${call.talkgroup}`;
+  npTg.textContent = `${call.unit} · call ${call.callId}`;
+  currentlyPlayingUnit = call.unit;
+  renderUnits(searchEl.value);
+
+  // Audio is proxied through the Worker too — the session cookie is what
+  // authorizes it now, no API key involved on the browser side at all.
+  try {
+    setConnLabel(`loading audio for ${call.unit}...`);
+    const res = await fetch(call.audioUrl, { credentials: 'include' });
+    if (!res.ok) {
+      setConnLabel(`audio fetch failed: ${res.status}`);
+      return;
+    }
+    const blob = await res.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    if (playerEl.dataset.blobUrl) URL.revokeObjectURL(playerEl.dataset.blobUrl);
+    playerEl.dataset.blobUrl = objectUrl;
+    playerEl.src = objectUrl;
+    if (!muted) {
+      playerEl.play().catch(() => {
+        setConnLabel('audio blocked — tap a channel to enable playback');
+      });
+    }
+    setConnLabel(`monitoring ${monitoredUnits.size} channel${monitoredUnits.size === 1 ? '' : 's'}`);
+  } catch (err) {
+    setConnLabel(`audio fetch error: ${err.message}`);
+  }
+}
+
+playerEl.addEventListener('ended', () => {
+  if (playQueue.length > 0) {
+    playCall(playQueue.shift());
+  } else {
+    clearNowPlaying();
+  }
+});
+
+playerEl.addEventListener('error', () => {
+  const err = playerEl.error;
+  const codes = { 1: 'aborted', 2: 'network error', 3: 'decode error', 4: 'source not supported' };
+  const reason = err ? (codes[err.code] || `code ${err.code}`) : 'unknown';
+  setConnLabel(`audio failed to load: ${reason}`);
+});
+
+/* ============================================================
+   LIVE CALL HANDLING
+   ============================================================ */
+
+function handleNewCall(call) {
+  recentCalls.unshift(call);
+  recentCalls = recentCalls.slice(0, 100);
+  renderCall(call);
+
+  // Only auto-play if the unit is still monitored (it may have been
+  // toggled off between the socket message and now).
+  if (!monitoredUnits.has(call.unit)) return;
+
+  if (playerEl.paused || playerEl.ended) {
+    playCall(call);
+  } else {
+    playQueue.push(call);
+  }
+}
+
+/* ============================================================
+   QUICK PREVIEW — tap a channel name to hear its most recent call
+   without turning on continuous live monitoring
+   ============================================================ */
+async function previewUnit(unit) {
+  unlockAudio();
+  setConnLabel(`fetching latest for ${unit}...`);
+  try {
+    const data = await fetchLatestForUnit(unit);
+    if (data.status === 'found') {
+      playCall({
+        unit: data.unit,
+        callId: data.call_id,
+        talkgroup: data.talkgroup,
+        callTime: data.call_time,
+        audioUrl: data.audio_url,
+      });
+    } else {
+      setConnLabel(`no recent traffic for ${unit}`);
+    }
+  } catch (err) {
+    setConnLabel(`error fetching ${unit}`);
+  }
+}
+
+/* ============================================================
+   AUTH GATE
+   ============================================================ */
+
+const gateEl = document.getElementById('gate');
+const gatePinEl = document.getElementById('gate-pin');
+const gateSubmitEl = document.getElementById('gate-submit');
+const gateErrorEl = document.getElementById('gate-error');
+const appEl = document.getElementById('app');
+const signedInAsEl = document.getElementById('signed-in-as');
+
+function showApp(name) {
+  gateEl.classList.add('hidden');
+  appEl.classList.remove('hidden');
+  signedInAsEl.innerHTML = `${name} <button id="signout-btn">sign out</button>`;
+  document.getElementById('signout-btn').addEventListener('click', signOut);
+  requestWakeLock();
+}
+
+// Keeps the screen from auto-locking while the app is open and in view.
+// Browsers automatically release this the moment the tab is backgrounded
+// (it can't fight OS backgrounding, only stop the screen timing out while
+// you're actively looking at it) — so it has to be re-requested every
+// time the app comes back to the foreground.
+let wakeLock = null;
+
+async function requestWakeLock() {
+  if (!('wakeLock' in navigator)) return; // unsupported browser — silently skip
+  if (appEl.classList.contains('hidden')) return; // not logged in yet
+  try {
+    wakeLock = await navigator.wakeLock.request('screen');
+    wakeLock.addEventListener('release', () => { wakeLock = null; });
+  } catch (err) {
+    // Permission denied or similar — non-fatal, screen can just sleep normally.
+  }
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') requestWakeLock();
+});
+
+async function checkSession() {
+  try {
+    const res = await fetch(`${AUTH_BASE}/auth/verify`, { credentials: 'include' });
+    const data = await res.json();
+    if (data.ok) { showApp(data.name); return true; }
+  } catch (err) { /* worker unreachable — fall through to PIN prompt */ }
+  return false;
+}
+
+async function submitPin() {
+  const pin = gatePinEl.value.trim();
+  if (!pin) return;
+  gateSubmitEl.disabled = true;
+  gateErrorEl.textContent = '';
+  try {
+    const res = await fetch(`${AUTH_BASE}/auth/login`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pin }),
+    });
+    const data = await res.json();
+    if (data.ok) {
+      showApp(data.name);
+    } else {
+      gateErrorEl.textContent = 'incorrect pin';
+      gatePinEl.value = '';
+      gatePinEl.focus();
+    }
+  } catch (err) {
+    gateErrorEl.textContent = 'could not reach auth server';
+  }
+  gateSubmitEl.disabled = false;
+}
+
+async function signOut() {
+  try {
+    await fetch(`${AUTH_BASE}/auth/logout`, { method: 'POST', credentials: 'include' });
+  } catch (err) { /* ignore */ }
+  if (wakeLock) { wakeLock.release(); wakeLock = null; }
+  location.reload();
+}
+
+gateSubmitEl.addEventListener('click', submitPin);
+gatePinEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') submitPin(); });
+
+checkSession(); // auto-unlocks if a valid session cookie already exists
+
+/* ============================================================
+   WIRE UP
+   ============================================================ */
+
+renderUnits();
+setConnLabel('idle — toggle a channel to start monitoring');
+
+tgListEl.addEventListener('click', (e) => {
+  const btn = e.target.closest('.tg-toggle');
+  if (btn) { toggleUnit(btn.dataset.tg); return; }
+  const preview = e.target.closest('[data-preview]');
+  if (preview) previewUnit(preview.dataset.preview);
+});
+
+searchEl.addEventListener('input', () => renderUnits(searchEl.value));
+
+/* ---------- Mobile sidebar toggle ---------- */
+const sidebarEl = document.getElementById('sidebar');
+const backdropEl = document.getElementById('sidebar-backdrop');
+const menuBtnEl = document.getElementById('menu-btn');
+const sidebarCloseEl = document.getElementById('sidebar-close');
+
+function openSidebar() {
+  sidebarEl.classList.add('open');
+  backdropEl.classList.add('open');
+}
+function closeSidebar() {
+  sidebarEl.classList.remove('open');
+  backdropEl.classList.remove('open');
+}
+
+menuBtnEl.addEventListener('click', openSidebar);
+sidebarCloseEl.addEventListener('click', closeSidebar);
+backdropEl.addEventListener('click', closeSidebar);
+
+document.getElementById('help-toggle').addEventListener('click', () => {
+  document.getElementById('help-modal').classList.remove('hidden');
+});
+document.getElementById('help-modal-close').addEventListener('click', () => {
+  document.getElementById('help-modal').classList.add('hidden');
+});
+document.getElementById('help-modal').addEventListener('click', (e) => {
+  if (e.target.id === 'help-modal') e.currentTarget.classList.add('hidden');
+});
+
+document.getElementById('mute-btn').addEventListener('click', (e) => {
+  const btn = e.currentTarget;
+  muted = !muted;
+  btn.textContent = muted ? '🔇' : '🔊';
+  if (muted) playerEl.pause(); else playerEl.play().catch(() => {});
+  npBars.style.opacity = muted ? '0.15' : '1';
+});
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js').catch(() => {
+      // Non-fatal — the app still works without offline/install support.
+    });
+  });
+}
+</script>
+</body>
+</html>

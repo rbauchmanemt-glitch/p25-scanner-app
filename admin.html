@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Admin — Bexar County Scanner</title>
+<link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
+<style>
+  :root{
+    --bg: #0a0d0e;
+    --panel: #12171a;
+    --panel-2: #171d21;
+    --line: #232b2f;
+    --amber: #ffb238;
+    --amber-dim: #7a5a1f;
+    --green: #4ade80;
+    --red: #ff5555;
+    --text: #d8dfe2;
+    --text-dim: #6b7780;
+    --mono: 'SF Mono', 'JetBrains Mono', 'Courier New', monospace;
+    --sans: -apple-system, 'Inter', 'Segoe UI', sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    height: 100dvh;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+  .hidden { display: none !important; }
+  button { font-family: inherit; cursor: pointer; }
+
+  #gate {
+    position: fixed;
+    inset: 0;
+    background: var(--bg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  #gate-box {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 32px;
+    width: 260px;
+    text-align: center;
+  }
+  #gate-box h2 {
+    font-family: var(--mono);
+    font-size: 13px;
+    letter-spacing: 0.12em;
+    color: var(--amber);
+    margin-bottom: 20px;
+  }
+  #gate-pin {
+    width: 100%;
+    padding: 12px;
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 20px;
+    letter-spacing: 0.3em;
+    text-align: center;
+  }
+  #gate-submit {
+    width: 100%;
+    margin-top: 12px;
+    padding: 10px;
+    background: rgba(255,178,56,0.1);
+    border: 1px solid var(--amber-dim);
+    border-radius: 4px;
+    color: var(--amber);
+    font-family: var(--mono);
+    font-size: 12px;
+  }
+  #gate-error {
+    color: var(--red);
+    font-size: 11px;
+    font-family: var(--mono);
+    margin-top: 10px;
+    min-height: 14px;
+  }
+
+  #page { padding: 24px; max-width: 720px; margin: 0 auto; }
+
+  /* iOS PWA/home-screen rendering can put content under the notch/status
+     bar unless space is reserved — same fix as the main app. Only the
+     top matters; the bottom home-indicator area doesn't cover content. */
+  @media (display-mode: standalone) {
+    #page {
+      padding-top: calc(24px + env(safe-area-inset-top));
+    }
+  }
+  #page-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  #page-header h1 {
+    font-family: var(--mono);
+    font-size: 16px;
+    letter-spacing: 0.08em;
+    color: var(--amber);
+  }
+  #back-link {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--text-dim);
+    text-decoration: underline;
+  }
+  #summary {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--text-dim);
+    margin-bottom: 16px;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: var(--mono);
+    font-size: 13px;
+  }
+  th, td {
+    text-align: left;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--line);
+  }
+  th {
+    color: var(--text-dim);
+    font-size: 11px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+  td { color: var(--text); }
+  .row-you { background: rgba(255,178,56,0.05); }
+  #denied, #empty {
+    font-family: var(--mono);
+    color: var(--text-dim);
+    padding: 40px 0;
+    text-align: center;
+  }
+  #log-heading {
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.08em;
+    color: var(--text-dim);
+    margin: 32px 0 12px;
+    padding-top: 20px;
+    border-top: 1px solid var(--line);
+  }
+</style>
+</head>
+<body>
+
+<div id="gate">
+  <div id="gate-box">
+    <h2>ENTER PIN</h2>
+    <input id="gate-pin" type="password" inputmode="numeric" maxlength="8" autocomplete="off" />
+    <button id="gate-submit">UNLOCK</button>
+    <div id="gate-error"></div>
+  </div>
+</div>
+
+<div id="page" class="hidden">
+  <div id="page-header">
+    <h1>ADMIN — SIGNED IN</h1>
+    <a href="./" id="back-link">&larr; back to scanner</a>
+  </div>
+  <div id="summary"></div>
+  <div id="table-wrap"></div>
+
+  <h2 id="log-heading">LOGIN HISTORY</h2>
+  <div id="log-wrap"></div>
+</div>
+
+<script>
+const AUTH_BASE = 'https://auth.bexarcountyscanner.com';
+
+const gateEl = document.getElementById('gate');
+const gatePinEl = document.getElementById('gate-pin');
+const gateSubmitEl = document.getElementById('gate-submit');
+const gateErrorEl = document.getElementById('gate-error');
+const pageEl = document.getElementById('page');
+const summaryEl = document.getElementById('summary');
+const tableWrapEl = document.getElementById('table-wrap');
+const logWrapEl = document.getElementById('log-wrap');
+
+let myName = null;
+let refreshTimer = null;
+
+function showPage(name) {
+  myName = name;
+  gateEl.classList.add('hidden');
+  pageEl.classList.remove('hidden');
+  loadSessions();
+  loadLog();
+  refreshTimer = setInterval(() => { loadSessions(); loadLog(); }, 15000);
+}
+
+async function checkSession() {
+  try {
+    const res = await fetch(`${AUTH_BASE}/auth/verify`, { credentials: 'include' });
+    const data = await res.json();
+    if (data.ok) { showPage(data.name); return true; }
+  } catch (err) { /* fall through to PIN prompt */ }
+  return false;
+}
+
+async function submitPin() {
+  const pin = gatePinEl.value.trim();
+  if (!pin) return;
+  gateSubmitEl.disabled = true;
+  gateErrorEl.textContent = '';
+  try {
+    const res = await fetch(`${AUTH_BASE}/auth/login`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pin }),
+    });
+    const data = await res.json();
+    if (data.ok) {
+      showPage(data.name);
+    } else {
+      gateErrorEl.textContent = 'incorrect pin';
+      gatePinEl.value = '';
+      gatePinEl.focus();
+    }
+  } catch (err) {
+    gateErrorEl.textContent = 'could not reach auth server';
+  }
+  gateSubmitEl.disabled = false;
+}
+
+gateSubmitEl.addEventListener('click', submitPin);
+gatePinEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') submitPin(); });
+
+function fmtTime(ms) {
+  return new Date(ms).toLocaleString([], {
+    month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+  });
+}
+
+async function loadSessions() {
+  try {
+    const res = await fetch(`${AUTH_BASE}/admin/sessions`, { credentials: 'include' });
+    if (res.status === 403) {
+      clearInterval(refreshTimer);
+      tableWrapEl.innerHTML = '<div id="denied">Your PIN is valid, but you\'re not on the admin list.</div>';
+      summaryEl.textContent = '';
+      return;
+    }
+    const data = await res.json();
+    const sessions = data.sessions || [];
+    summaryEl.textContent = `${sessions.length} signed in · refreshes every 15s`;
+
+    if (sessions.length === 0) {
+      tableWrapEl.innerHTML = '<div id="empty">No one is currently signed in.</div>';
+      return;
+    }
+
+    const rows = sessions.map(s => `
+      <tr class="${s.name === myName ? 'row-you' : ''}">
+        <td>${s.name}${s.name === myName ? ' (you)' : ''}</td>
+        <td>${fmtTime(s.loginTime)}</td>
+        <td>${fmtTime(s.expiresAt)}</td>
+      </tr>
+    `).join('');
+
+    tableWrapEl.innerHTML = `
+      <table>
+        <thead>
+          <tr><th>Name</th><th>Signed in</th><th>Expires</th></tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    `;
+  } catch (err) {
+    tableWrapEl.innerHTML = '<div id="denied">Could not reach the server.</div>';
+  }
+}
+
+async function loadLog() {
+  try {
+    const res = await fetch(`${AUTH_BASE}/admin/log`, { credentials: 'include' });
+    if (res.status === 403) {
+      logWrapEl.innerHTML = ''; // sessions table already shows the denial message
+      return;
+    }
+    const data = await res.json();
+    const log = data.log || [];
+
+    if (log.length === 0) {
+      logWrapEl.innerHTML = '<div id="empty">No login history yet.</div>';
+      return;
+    }
+
+    const rows = log.map(entry => `
+      <tr class="${entry.name === myName ? 'row-you' : ''}">
+        <td>${entry.name}${entry.name === myName ? ' (you)' : ''}</td>
+        <td>${fmtTime(entry.loginTime)}</td>
+      </tr>
+    `).join('');
+
+    logWrapEl.innerHTML = `
+      <table>
+        <thead>
+          <tr><th>Name</th><th>Signed in at</th></tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    `;
+  } catch (err) {
+    logWrapEl.innerHTML = '<div id="denied">Could not reach the server.</div>';
+  }
+}
+
+checkSession();
+</script>
+</body>
+</html>
